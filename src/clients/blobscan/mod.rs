@@ -37,7 +37,7 @@ impl BlobscanClient {
         let base_url = Url::parse(&format!("{}/", config.base_url))?;
         let jwt_manager = JWTManager::new(JWTManagerConfig {
             secret_key: config.secret_key,
-            refresh_interval: TimeDelta::try_hours(1).unwrap(),
+            refresh_interval: TimeDelta::try_weeks(200).unwrap(),
             safety_magin: None,
         });
         let exp_backoff = config.exp_backoff;

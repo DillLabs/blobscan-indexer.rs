@@ -19,7 +19,7 @@ pub struct Environment {
 }
 
 fn default_network() -> Network {
-    Network::Mainnet
+    Network::Devnet
 }
 
 fn default_blobscan_api_endpoint() -> String {

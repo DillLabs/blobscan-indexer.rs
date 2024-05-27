@@ -8,8 +8,8 @@ use crate::{
     json_get,
 };
 
-use self::types::{Blob, BlobsResponse, Block, BlockHeader, BlockId, BlockResponse, Topic};
-
+// use self::types::{Blob, BlobsResponse, Block, BlockHeader, BlockId, BlockResponse, Topic};
+use self::types::{Block, BlockHeader, BlockId, BlockResponse, ColumnsResponse, Topic};
 pub mod types;
 
 #[derive(Debug, Clone)]
@@ -63,14 +63,26 @@ impl BeaconClient {
         })
     }
 
-    pub async fn get_blobs(&self, block_id: &BlockId) -> ClientResult<Option<Vec<Blob>>> {
-        let path = format!("v1/beacon/blob_sidecars/{}", {
+    // pub async fn get_blobs(&self, block_id: &BlockId) -> ClientResult<Option<Vec<Blob>>> {
+    //     let path = format!("v1/beacon/blob_sidecars/{}", {
+    //         block_id.to_detailed_string()
+    //     });
+    //     let url = self.base_url.join(path.as_str())?;
+
+    //     json_get!(&self.client, url, BlobsResponse, self.exp_backoff.clone()).map(|res| match res {
+    //         Some(r) => Some(r.data),
+    //         None => None,
+    //     })
+    // }
+
+    pub async fn get_columns(&self, block_id: &BlockId) -> ClientResult<Option<ColumnsResponse>> {
+        let path = format!("v1/beacon/column_sidecars/{}", {
             block_id.to_detailed_string()
         });
         let url = self.base_url.join(path.as_str())?;
 
-        json_get!(&self.client, url, BlobsResponse, self.exp_backoff.clone()).map(|res| match res {
-            Some(r) => Some(r.data),
+        json_get!(&self.client, url, ColumnsResponse, self.exp_backoff.clone()).map(|res| match res {
+            Some(r) => Some(r),
             None => None,
         })
     }

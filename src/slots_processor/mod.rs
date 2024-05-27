@@ -5,7 +5,7 @@ use tracing::{debug, info};
 
 use crate::{
     clients::{
-        beacon::types::{BlockHeader, BlockId},
+        beacon::types::{BlobsResponse, BlockHeader, BlockId},
         blobscan::types::{Blob, Block, Transaction},
     },
     context::Context,
@@ -141,32 +141,61 @@ impl SlotsProcessor {
 
         // Fetch blobs and perform some checks
 
-        let blobs = match beacon_client
-            .get_blobs(&BlockId::Slot(slot))
+        // let blobs = match beacon_client
+        //     .get_blobs(&BlockId::Slot(slot))
+        //     .await
+        //     .map_err(SlotProcessingError::ClientError)?
+        // {
+        //     Some(blobs) => {
+        //         if blobs.is_empty() {
+        //             debug!(
+        //                 target = "slots_processor",
+        //                 slot, "Skipping as blobs sidecar is empty"
+        //             );
+
+        //             return Ok(());
+        //         } else {
+        //             blobs
+        //         }
+        //     }
+        //     None => {
+        //         debug!(
+        //             target = "slots_processor",
+        //             slot, "Skipping as there is no blobs sidecar"
+        //         );
+
+        //         return Ok(());
+        //     }
+        // };
+        let columns = match beacon_client
+            .get_columns(&BlockId::Slot(slot))
             .await
             .map_err(SlotProcessingError::ClientError)?
         {
-            Some(blobs) => {
-                if blobs.is_empty() {
+            Some(columns) => {
+                if columns.data.is_empty() {
                     debug!(
                         target = "slots_processor",
-                        slot, "Skipping as blobs sidecar is empty"
+                        slot, "Skipping as columns sidecar is empty"
                     );
 
                     return Ok(());
                 } else {
-                    blobs
+                    columns
                 }
             }
             None => {
                 debug!(
                     target = "slots_processor",
-                    slot, "Skipping as there is no blobs sidecar"
+                    slot, "Skipping as there is no columns sidecar"
                 );
 
                 return Ok(());
             }
         };
+
+        let blobs = BlobsResponse::from(columns).data;
+
 
         // Create entities to be indexed
 

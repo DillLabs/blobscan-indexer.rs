@@ -65,6 +65,19 @@ pub struct BlobsResponse {
 }
 
 #[derive(Deserialize, Debug)]
+pub struct Column {
+    pub index: String,
+    pub blob_kzg_commitments: Vec<String>,
+    pub segment_kzg_proofs: Vec<String>,
+    pub segments: Vec<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ColumnsResponse {
+    pub data: Vec<Column>,
+}
+
+#[derive(Deserialize, Debug)]
 pub struct BlockHeaderResponse {
     pub data: BlockHeader,
 }
@@ -181,5 +194,26 @@ impl From<HeadEventData> for BlockData {
             root: event_data.block,
             slot: event_data.slot,
         }
+    }
+}
+
+impl From<ColumnsResponse> for BlobsResponse {
+    fn from(columns_res: ColumnsResponse) -> Self {
+        let mut blobs = Vec::new();
+        let kzg_commitments = columns_res.data[0].blob_kzg_commitments.clone();
+        
+        //每个blob的index对应columns_res.data的每个column的index
+        //第i个blob的kzg_commitment对应columns_res.data的第0号column的blob_kzg_commitments的第i个元素
+        //每个blob的kzg_proof为空字符串
+        //每个blob的kzg_proof为空bytes
+        for (i, comm) in kzg_commitments.iter().enumerate() {
+            blobs.push(Blob {
+                index: columns_res.data[i].index.clone(),
+                kzg_commitment: comm.clone(),
+                kzg_proof: String::new(),
+                blob: Bytes::from_str(comm).unwrap(),
+            });
+        }
+        Self { data: blobs }
     }
 }

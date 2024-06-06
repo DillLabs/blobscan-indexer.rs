@@ -40,7 +40,7 @@ impl Context {
         let exp_backoff = Some(ExponentialBackoffBuilder::default().build());
 
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(3000))
             .build()?;
 
         Ok(Self {

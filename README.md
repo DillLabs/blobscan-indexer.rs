@@ -1,4 +1,4 @@
-# DillScan indexer <a href="#"><img align="right" src=".github/assets/logo.svg" height="80px" /></a>
+# DillScan indexer
 
 Forked from blob scan indexer.
 

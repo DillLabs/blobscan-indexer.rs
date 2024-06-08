@@ -208,7 +208,7 @@ impl From<ColumnsResponse> for BlobsResponse {
         //每个blob的kzg_proof为空bytes
         for (i, comm) in kzg_commitments.iter().enumerate() {
             blobs.push(Blob {
-                index: columns_res.data[i].index.clone(),
+                index: i.to_string(),
                 kzg_commitment: comm.clone(),
                 kzg_proof: String::new(),
                 blob: Bytes::from_str(comm).unwrap(),

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context as AnyhowContext, Result};
+use anyhow::{Context as AnyhowContext, Result};
 
 use ethers::prelude::*;
 use tracing::{debug, info};
@@ -114,14 +114,14 @@ impl SlotsProcessor {
             None => false,
         };
 
-        if !has_kzg_blob_commitments {
-            debug!(
-                target = "slots_processor",
-                slot, "Skipping as beacon block doesn't contain blob kzg commitments"
-            );
+        // if !has_kzg_blob_commitments {
+        //     debug!(
+        //         target = "slots_processor",
+        //         slot, "Skipping as beacon block doesn't contain blob kzg commitments"
+        //     );
 
-            return Ok(());
-        }
+        //     return Ok(());
+        // }
 
         let execution_block_hash = execution_payload.block_hash;
 
@@ -131,13 +131,13 @@ impl SlotsProcessor {
             .get_block_with_txs(execution_block_hash)
             .await?
             .with_context(|| format!("Execution block {execution_block_hash} not found"))?;
-
+        //create versioned_hashes for blob transactions
         let tx_hash_to_versioned_hashes =
             create_tx_hash_versioned_hashes_mapping(&execution_block)?;
 
-        if tx_hash_to_versioned_hashes.is_empty() {
-            return Err(anyhow!("Blocks mismatch: Beacon block contains blob KZG commitments, but the corresponding execution block does not contain any blob transactions").into());
-        }
+        // if tx_hash_to_versioned_hashes.is_empty() {
+        //     return Err(anyhow!("Blocks mismatch: Beacon block contains blob KZG commitments, but the corresponding execution block does not contain any blob transactions").into());
+        // }
 
         // Fetch blobs and perform some checks
 
@@ -167,34 +167,7 @@ impl SlotsProcessor {
         //         return Ok(());
         //     }
         // };
-        let columns = match beacon_client
-            .get_columns(&BlockId::Slot(slot))
-            .await
-            .map_err(SlotProcessingError::ClientError)?
-        {
-            Some(columns) => {
-                if columns.data.is_empty() {
-                    debug!(
-                        target = "slots_processor",
-                        slot, "Skipping as columns sidecar is empty"
-                    );
-
-                    return Ok(());
-                } else {
-                    columns
-                }
-            }
-            None => {
-                debug!(
-                    target = "slots_processor",
-                    slot, "Skipping as there is no columns sidecar"
-                );
-
-                return Ok(());
-            }
-        };
-
-        let blobs = BlobsResponse::from(columns).data;
+        
 
 
         // Create entities to be indexed
@@ -204,20 +177,59 @@ impl SlotsProcessor {
         let transactions_entities = execution_block
             .transactions
             .iter()
-            .filter(|tx| tx_hash_to_versioned_hashes.contains_key(&tx.hash))
+            // .filter(|tx| tx_hash_to_versioned_hashes.contains_key(&tx.hash))
             .map(|tx| Transaction::try_from((tx, &execution_block)))
             .collect::<Result<Vec<Transaction>>>()?;
 
-        let versioned_hash_to_blob = create_versioned_hash_blob_mapping(&blobs)?;
+        if transactions_entities.is_empty() {
+            debug!(
+                target = "slots_processor",
+                slot, "Skipping as there are no transactions to index, it is a empty block!"
+            );
+
+            return Ok(());
+        }
         let mut blob_entities: Vec<Blob> = vec![];
+        //if there are blobs, create blob entities
+        if has_kzg_blob_commitments {
+            let columns = match beacon_client
+                .get_columns(&BlockId::Slot(slot))
+                .await
+                .map_err(SlotProcessingError::ClientError)?
+            {
+                Some(columns) => {
+                    if columns.data.is_empty() {
+                        debug!(
+                            target = "slots_processor",
+                            slot, "Skipping as columns sidecar is empty"
+                        );
 
-        for (tx_hash, versioned_hashes) in tx_hash_to_versioned_hashes.iter() {
-            for (i, versioned_hash) in versioned_hashes.iter().enumerate() {
-                let blob = *versioned_hash_to_blob.get(versioned_hash).with_context(|| format!("Sidecar not found for blob {i} with versioned hash {versioned_hash} from tx {tx_hash}"))?;
+                        return Ok(());
+                    } else {
+                        columns
+                    }
+                }
+                None => {
+                    debug!(
+                        target = "slots_processor",
+                        slot, "Skipping as there is no columns sidecar"
+                    );
 
-                blob_entities.push(Blob::from((blob, versioned_hash, i, tx_hash)));
+                    return Ok(());
+                }
+            };
+
+            let blobs = BlobsResponse::from(columns).data;
+            let versioned_hash_to_blob = create_versioned_hash_blob_mapping(&blobs)?;
+            for (tx_hash, versioned_hashes) in tx_hash_to_versioned_hashes.iter() {
+                for (i, versioned_hash) in versioned_hashes.iter().enumerate() {
+                    let blob = *versioned_hash_to_blob.get(versioned_hash).with_context(|| format!("Sidecar not found for blob {i} with versioned hash {versioned_hash} from tx {tx_hash}"))?;
+    
+                    blob_entities.push(Blob::from((blob, versioned_hash, i, tx_hash)));
+                }
             }
         }
+        
 
         /*
         let tx_hashes = transactions_entities

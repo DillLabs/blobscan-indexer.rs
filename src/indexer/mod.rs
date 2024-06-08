@@ -93,7 +93,7 @@ impl Indexer {
                     Some(slot) => BlockId::Slot(self._get_current_lower_slot(slot)),
                     None => match state.last_upper_synced_slot {
                         Some(slot) => BlockId::Slot(self._get_current_lower_slot(slot)),
-                        None => BlockId::Slot(0),
+                        None => BlockId::Slot(1),
                     },
                 },
                 None => BlockId::Head,

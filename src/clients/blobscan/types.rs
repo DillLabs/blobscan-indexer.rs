@@ -143,9 +143,10 @@ impl<'a> TryFrom<(&'a EthersBlock<EthersTransaction>, u32)> for Block {
                     U256::from_str_radix(blob_gas_used, 16)?
                 }
                 None => {
-                    return Err(anyhow::anyhow!(
-                        "Missing `blobGasUsed` field in execution block {number}"
-                    ))
+                    // return Err(anyhow::anyhow!(
+                    //     "Missing `blobGasUsed` field in execution block {number}"
+                    // ))
+                    U256::zero()
                 }
             },
             excess_blob_gas: match ethers_block.other.get("excessBlobGas") {
@@ -159,9 +160,10 @@ impl<'a> TryFrom<(&'a EthersBlock<EthersTransaction>, u32)> for Block {
                     U256::from_str_radix(excess_blob_gas, 16)?
                 }
                 None => {
-                    return Err(anyhow::anyhow!(
-                        "Missing `excessBlobGas` field in execution block {number}"
-                    ))
+                    // return Err(anyhow::anyhow!(
+                    //     "Missing `excessBlobGas` field in execution block {number}"
+                    // ))
+                    U256::zero()
                 }
             },
         })
@@ -199,10 +201,12 @@ impl<'a> TryFrom<(&'a EthersTransaction, &'a EthersBlock<EthersTransaction>)> fo
                     U256::from_str_radix(max_fee_per_blob_gas, 16)?
                 }
                 None => {
-                    return Err(anyhow::anyhow!(
-                        "Missing `maxFeePerBlobGas` field in transaction {hash}",
-                        hash = hash
-                    ))
+                    // return Err(anyhow::anyhow!(
+                    //     "Missing `maxFeePerBlobGas` field in transaction {hash}",
+                    //     hash = hash
+                    // ))
+                    println!("this is a transaction with no blob");
+                    U256::zero()
                 }
             },
         })

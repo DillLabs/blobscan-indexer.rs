@@ -83,7 +83,13 @@ impl SlotsProcessor {
         let beacon_client = self.context.beacon_client();
         let blobscan_client = self.context.blobscan_client();
         let provider = self.context.provider();
-
+        if slot == 0 {
+            debug!(
+                target = "slots_processor",
+                slot, "Slot = 0! Skipping getting initial beacon block as it's empty."
+            );
+            return Ok(());
+        }
         let beacon_block = match beacon_client.get_block(&BlockId::Slot(slot)).await? {
             Some(block) => block,
             None => {

@@ -34,7 +34,7 @@ impl Default for SynchronizerBuilder {
         SynchronizerBuilder {
             num_threads: 1,
             min_slots_per_thread: 50,
-            slots_checkpoint: 1000,
+            slots_checkpoint: 200,
             disable_checkpoint_save: false,
         }
     }

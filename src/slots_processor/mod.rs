@@ -46,33 +46,21 @@ impl SlotsProcessor {
         initial_slot: u32,
         final_slot: u32,
     ) -> Result<(), SlotsProcessorError> {
-        let is_reverse_processing = initial_slot > final_slot;
-
-        if is_reverse_processing {
-            for current_slot in (final_slot..=initial_slot).rev() {
-                let result = self.process_slot(current_slot).await;
-
-                if let Err(error) = result {
-                    return Err(SlotsProcessorError::FailedSlotsProcessing {
-                        initial_slot,
-                        final_slot,
-                        failed_slot: current_slot,
-                        error,
-                    });
-                }
-            }
+        let is_reverse = initial_slot > final_slot;
+        let slots = if is_reverse {
+            (final_slot..initial_slot).rev().collect::<Vec<_>>()
         } else {
-            for current_slot in initial_slot..=final_slot {
-                let result = self.process_slot(current_slot).await;
+            (initial_slot..final_slot).collect::<Vec<_>>()
+        };
 
-                if let Err(error) = result {
-                    return Err(SlotsProcessorError::FailedSlotsProcessing {
-                        initial_slot,
-                        final_slot,
-                        failed_slot: current_slot,
-                        error,
-                    });
-                }
+        for current_slot in slots {
+            if let Err(error) = self.process_slot(current_slot).await {
+                return Err(SlotsProcessorError::FailedSlotsProcessing {
+                    initial_slot,
+                    final_slot,
+                    failed_slot: current_slot,
+                    error,
+                });
             }
         }
 
@@ -93,11 +81,7 @@ impl SlotsProcessor {
         let beacon_block = match beacon_client.get_block(&BlockId::Slot(slot)).await? {
             Some(block) => block,
             None => {
-                debug!(
-                    target = "slots_processor",
-                    slot = slot,
-                    "Skipping as there is no beacon block"
-                );
+                debug!(slot = slot, "Skipping as there is no beacon block");
 
                 return Ok(());
             }
@@ -107,8 +91,8 @@ impl SlotsProcessor {
             Some(payload) => payload,
             None => {
                 debug!(
-                    target = "slots_processor",
-                    slot, "Skipping as beacon block doesn't contain execution payload"
+                    slot,
+                    "Skipping as beacon block doesn't contain execution payload"
                 );
 
                 return Ok(());
@@ -248,15 +232,14 @@ impl SlotsProcessor {
             .collect::<Vec<String>>();
          */
 
+        let block_number = block_entity.number.as_u32();
+
         blobscan_client
             .index(block_entity, transactions_entities, blob_entities)
             .await
             .map_err(SlotProcessingError::ClientError)?;
 
-        info!(
-            target = "slots_processor",
-            slot, "Block indexed successfully"
-        );
+        info!(slot, block_number, "Block indexed successfully");
 
         Ok(())
     }

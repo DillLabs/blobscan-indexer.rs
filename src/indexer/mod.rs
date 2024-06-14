@@ -108,7 +108,7 @@ impl Indexer {
             Some(block_id) => block_id,
             None => match &sync_state {
                 Some(state) => match state.last_lower_synced_slot {
-                    Some(slot) => BlockId::Slot(slot - 1),
+                    Some(slot) => BlockId::Slot(if slot > 0 { slot - 1 } else { 0 }),
                     None => match state.last_upper_synced_slot {
                         Some(slot) => BlockId::Slot(slot - 1),
                         None => BlockId::Head,
@@ -146,7 +146,7 @@ impl Indexer {
             total_tasks += 1;
         }
 
-        let default_end_block = BlockId::Slot(self.dencun_fork_slot - 1);
+        let default_end_block = BlockId::Slot(self.dencun_fork_slot);
         let end_block_id = end_block_id.unwrap_or(default_end_block);
         let historical_sync_completed =
             matches!(current_lower_block_id, BlockId::Slot(slot) if slot < self.dencun_fork_slot);

@@ -1,11 +1,11 @@
-use std::{cmp, thread};
+use std::thread;
 
 use anyhow::{anyhow, Context as AnyhowContext};
 
 use futures::StreamExt;
 use reqwest_eventsource::Event;
 use tokio::{sync::mpsc, task::JoinHandle};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, Instrument};
 
 use crate::{
     args::Args,
@@ -17,12 +17,17 @@ use crate::{
     },
     context::{Config as ContextConfig, Context},
     env::Environment,
-    synchronizer::{Synchronizer, SynchronizerBuilder},
+    indexer::error::{
+        ChainReorgedEventHandlingError, FinalizedBlockEventHandlingError,
+        HeadBlockEventHandlingError, HistoricalSyncingError,
+    },
+    synchronizer::{CheckpointType, Synchronizer, SynchronizerBuilder},
+    utils::web3::get_full_hash,
 };
 
 use self::{
-    error::{IndexerError, IndexingTaskError},
-    types::{IndexerResult, IndexerTaskResult},
+    error::{IndexerError, RealtimeSyncingError},
+    types::{IndexerResult, IndexerTaskMessage},
 };
 
 pub mod error;
@@ -31,10 +36,11 @@ pub mod types;
 pub struct Indexer {
     context: Context,
     dencun_fork_slot: u32,
-    num_threads: u32,
-    slots_checkpoint: Option<u32>,
-    disable_sync_checkpoint_save: bool,
     disable_sync_historical: bool,
+
+    checkpoint_slots: Option<u32>,
+    disabled_checkpoint: Option<CheckpointType>,
+    num_threads: u32,
 }
 
 impl Indexer {
@@ -42,20 +48,32 @@ impl Indexer {
         let context = match Context::try_new(ContextConfig::from(env)) {
             Ok(c) => c,
             Err(error) => {
-                error!(target = "indexer", ?error, "Failed to create context");
+                error!(?error, "Failed to create context");
 
-                return Err(error.into());
+                return Err(IndexerError::CreationFailure(anyhow!(
+                    "Failed to create context: {:?}",
+                    error
+                )));
             }
         };
 
-        let slots_checkpoint = args.slots_per_save;
+        let checkpoint_slots = args.slots_per_save;
+        let disabled_checkpoint = if args.disable_sync_checkpoint_save {
+            Some(CheckpointType::Disabled)
+        } else {
+            None
+        };
         let num_threads = match args.num_threads {
             Some(num_threads) => num_threads,
             None => thread::available_parallelism()
-                .map_err(|err| anyhow!("Failed to get number of available threads: {:?}", err))?
+                .map_err(|err| {
+                    IndexerError::CreationFailure(anyhow!(
+                        "Failed to get number of available threads: {:?}",
+                        err
+                    ))
+                })?
                 .get() as u32,
         };
-        let disable_sync_checkpoint_save = args.disable_sync_checkpoint_save;
         let disable_sync_historical = args.disable_sync_historical;
 
         let dencun_fork_slot = env
@@ -64,11 +82,11 @@ impl Indexer {
 
         Ok(Self {
             context,
-            num_threads,
-            slots_checkpoint,
             dencun_fork_slot,
-            disable_sync_checkpoint_save,
             disable_sync_historical,
+            checkpoint_slots,
+            disabled_checkpoint,
+            num_threads,
         })
     }
 
@@ -80,9 +98,9 @@ impl Indexer {
         let sync_state = match self.context.blobscan_client().get_sync_state().await {
             Ok(state) => state,
             Err(error) => {
-                error!(target = "indexer", ?error, "Failed to fetch sync state");
+                error!(?error, "Failed to fetch blobscan's sync state");
 
-                return Err(error.into());
+                return Err(IndexerError::BlobscanSyncStateRetrievalError(error));
             }
         };
 
@@ -90,10 +108,10 @@ impl Indexer {
             Some(block_id) => block_id,
             None => match &sync_state {
                 Some(state) => match state.last_lower_synced_slot {
-                    Some(slot) => BlockId::Slot(self._get_current_lower_slot(slot)),
+                    Some(slot) => BlockId::Slot(if slot > 0 { slot - 1 } else { 0 }),
                     None => match state.last_upper_synced_slot {
-                        Some(slot) => BlockId::Slot(self._get_current_lower_slot(slot)),
-                        None => BlockId::Slot(1),
+                        Some(slot) => BlockId::Slot(slot - 1),
+                        None => BlockId::Head,
                     },
                 },
                 None => BlockId::Head,
@@ -114,7 +132,6 @@ impl Indexer {
         };
 
         info!(
-            target = "indexer",
             ?current_lower_block_id,
             ?current_upper_block_id,
             "Starting indexer…",
@@ -125,22 +142,17 @@ impl Indexer {
         let mut total_tasks = 0;
 
         if end_block_id.is_none() {
-            self._start_realtime_sync_task(tx, current_upper_block_id);
+            self._start_realtime_syncing_task(tx, current_upper_block_id);
             total_tasks += 1;
         }
 
-        if !self.disable_sync_historical {
-            let historical_start_block_id = current_lower_block_id;
-            let historical_end_block_id = match end_block_id {
-                Some(block_id) => block_id,
-                None => BlockId::Slot(self.dencun_fork_slot),
-            };
+        let default_end_block = BlockId::Slot(self.dencun_fork_slot);
+        let end_block_id = end_block_id.unwrap_or(default_end_block);
+        let historical_sync_completed =
+            matches!(current_lower_block_id, BlockId::Slot(slot) if slot < self.dencun_fork_slot);
 
-            self._start_historical_sync_task(
-                tx1,
-                historical_start_block_id,
-                historical_end_block_id,
-            );
+        if !self.disable_sync_historical && !historical_sync_completed {
+            self._start_historical_syncing_task(tx1, current_lower_block_id, end_block_id);
 
             total_tasks += 1;
         }
@@ -149,17 +161,15 @@ impl Indexer {
 
         while let Some(message) = rx.recv().await {
             match message {
-                IndexerTaskResult::Done(task_name) => {
-                    info!(target = "indexer", task = task_name, "Task completed.");
-
+                IndexerTaskMessage::Done => {
                     completed_tasks += 1;
 
                     if completed_tasks == total_tasks {
                         return Ok(());
                     }
                 }
-                IndexerTaskResult::Error(error) => {
-                    error!(target = "indexer", ?error, "Indexer error occurred");
+                IndexerTaskMessage::Error(error) => {
+                    error!(?error, "An error occurred while running a syncing task");
 
                     return Err(error.into());
                 }
@@ -169,48 +179,54 @@ impl Indexer {
         Ok(())
     }
 
-    fn _start_historical_sync_task(
+    fn _start_historical_syncing_task(
         &self,
-        tx: mpsc::Sender<IndexerTaskResult>,
+        tx: mpsc::Sender<IndexerTaskMessage>,
         start_block_id: BlockId,
         end_block_id: BlockId,
     ) -> JoinHandle<IndexerResult<()>> {
-        let task_name = "historical_sync".to_string();
-        let mut synchronizer = self._create_synchronizer();
+        let mut synchronizer = self._create_synchronizer(CheckpointType::Lower);
 
         tokio::spawn(async move {
-            let result = synchronizer.run(&start_block_id, &end_block_id).await;
+            let historical_syc_thread_span = tracing::info_span!("sync:historical");
 
-            if let Err(error) = result {
-                // TODO: Find a better way to handle this error
-                tx.send(IndexerTaskResult::Error(
-                    IndexingTaskError::FailedIndexingTask {
-                        task_name,
-                        error: error.into(),
-                    },
-                ))
-                .await
-                .unwrap();
-            } else {
-                tx.send(IndexerTaskResult::Done(task_name)).await.unwrap();
+            let result: Result<(), IndexerError> = async move {
+                let result = synchronizer.run(&start_block_id, &end_block_id).await;
+
+                if let Err(error) = result {
+                    tx.send(IndexerTaskMessage::Error(
+                        HistoricalSyncingError::SynchronizerError(error).into(),
+                    ))
+                    .await?;
+                } else {
+                    info!("Historical syncing completed successfully");
+
+                    tx.send(IndexerTaskMessage::Done).await?;
+                }
+
+                Ok(())
             }
+            .instrument(historical_syc_thread_span)
+            .await;
+
+            result?;
 
             Ok(())
         })
     }
 
-    fn _start_realtime_sync_task(
+    fn _start_realtime_syncing_task(
         &self,
-        tx: mpsc::Sender<IndexerTaskResult>,
+        tx: mpsc::Sender<IndexerTaskMessage>,
         start_block_id: BlockId,
     ) -> JoinHandle<IndexerResult<()>> {
-        let task_name = "realtime_sync".to_string();
-        let target = format!("indexer:{task_name}");
         let task_context = self.context.clone();
-        let mut synchronizer = self._create_synchronizer();
+        let mut synchronizer = self._create_synchronizer(CheckpointType::Upper);
 
         tokio::spawn(async move {
-            let result: Result<(), IndexerError> = async {
+            let realtime_sync_task_span = tracing::info_span!("sync:realtime");
+
+            let result: Result<(), RealtimeSyncingError> = async {
                 let beacon_client = task_context.beacon_client();
                 let blobscan_client = task_context.blobscan_client();
                 let topics = vec![
@@ -220,97 +236,142 @@ impl Indexer {
                 ];
                 let mut event_source = task_context
                     .beacon_client()
-                    .subscribe_to_events(&topics)?;
+                    .subscribe_to_events(&topics).map_err(RealtimeSyncingError::BeaconEventsSubscriptionError)?;
                 let mut is_initial_sync_to_head = true;
+                let events = topics
+                .iter()
+                .map(|topic| topic.into())
+                .collect::<Vec<String>>()
+                .join(", ");
+
+                info!("Subscribed to beacon events: {events}");
 
                 while let Some(event) = event_source.next().await {
                     match event {
                         Ok(Event::Open) => {
-                            let events = topics
-                                .iter()
-                                .map(|topic| topic.into())
-                                .collect::<Vec<String>>()
-                                .join(", ");
-                            debug!(target, events, "Listening to beacon events…")
+                            debug!("Subscription connection opened")
                         }
                         Ok(Event::Message(event)) => {
                             let event_name = event.event.as_str();
 
                             match event_name {
                                 "chain_reorg" => {
-                                    let reorg_block_data =
-                                        serde_json::from_str::<ChainReorgEventData>(&event.data)?;
-                                    let slot = reorg_block_data.slot;
-                                    let old_head_block = reorg_block_data.old_head_block;
-                                    let target_depth = reorg_block_data.depth;
+                                    let chain_reorg_span = tracing::info_span!("chain_reorg");
 
-                                    let mut current_reorged_block = old_head_block;
-                                    let mut reorged_slots: Vec<u32> = vec![];
+                                      let result: Result<(), ChainReorgedEventHandlingError> =  async {
+                                        let reorg_block_data =
+                                            serde_json::from_str::<ChainReorgEventData>(&event.data)?;
+                                        let slot = reorg_block_data.slot;
+                                        let old_head_block = reorg_block_data.old_head_block;
+                                        let target_depth = reorg_block_data.depth;
 
-                                    for current_depth in 1..=target_depth {
-                                        let reorged_block_head = match beacon_client.get_block_header(&BlockId::Hash(current_reorged_block)).await? {
-                                            Some(block) => block,
-                                            None => {
-                                                warn!(target, event=event_name, slot=slot, "Found {current_depth} out of {target_depth} reorged blocks only");
-                                                break
-                                            }
-                                        };
+                                        let mut current_reorged_block = old_head_block;
+                                        let mut reorged_slots: Vec<u32> = vec![];
 
-                                        reorged_slots.push(reorged_block_head.header.message.slot);
-                                        current_reorged_block = reorged_block_head.header.message.parent_root;
+                                        for current_depth in 1..=target_depth {
+                                            let reorged_block_head = match beacon_client.get_block_header(&BlockId::Hash(current_reorged_block)).await.map_err(|err| ChainReorgedEventHandlingError::BlockRetrievalError(get_full_hash(&current_reorged_block), err))? {
+                                                Some(block) => block,
+                                                None => {
+                                                    warn!(event=event_name, slot=slot, "Found {current_depth} out of {target_depth} reorged blocks only");
+                                                    break
+                                                }
+                                            };
+
+                                            reorged_slots.push(reorged_block_head.header.message.slot);
+                                            current_reorged_block = reorged_block_head.header.message.parent_root;
+                                        }
+
+                                        let total_updated_slots = blobscan_client.handle_reorged_slots(&reorged_slots).await.map_err(|err| ChainReorgedEventHandlingError::ReorgedHandlingFailure(target_depth, get_full_hash(&old_head_block), err))?;
+
+                                        info!(event=event_name, slot=slot, "Reorganization of depth {target_depth} detected. Found the following reorged slots: {:#?}. Total slots marked as reorged: {total_updated_slots}", reorged_slots);
+
+                                        Ok(())
+                                    }.instrument(chain_reorg_span).await;
+
+                                    if let Err(error) = result {
+                                        // If an error occurred while processing the event, try to update the latest synced slot to the last known slot before the reorg
+                                        if let Ok(reorg_block_data) = serde_json::from_str::<ChainReorgEventData>(&event.data) {
+                                            let slot = reorg_block_data.slot;
+
+                                            let _ = blobscan_client.update_sync_state(BlockchainSyncState {
+                                                last_finalized_block: None,
+                                                last_lower_synced_slot: None,
+                                                last_upper_synced_slot: Some(slot -1)
+                                            }).await;
+                                        }
+
+                                        return Err(RealtimeSyncingError::BeaconEventProcessingError(error.into()));
                                     }
-
-                                    let total_updated_slots = blobscan_client.handle_reorged_slots(&reorged_slots).await?;
-
-                                    info!(target, event=event_name, slot=slot, "Reorganization of depth {target_depth} detected. Found the following reorged slots: {:#?}. Total slots marked as reorged: {total_updated_slots}", reorged_slots);
                                 },
-                                "head" => {
-                                    let head_block_data =
+                                "head" => {                                    
+                                    let head_span = tracing::info_span!("head_block");
+
+                                    let result: Result<(), HeadBlockEventHandlingError> = async {
+                                        let head_block_data =
                                         serde_json::from_str::<HeadEventData>(&event.data)?;
+
 
                                     let head_block_id = &BlockId::Slot(head_block_data.slot);
                                     let initial_block_id = if is_initial_sync_to_head {
                                         is_initial_sync_to_head = false;
+
                                         &start_block_id
                                     } else {
                                         head_block_id
                                     };
 
-                                    synchronizer.run(initial_block_id, head_block_id).await?;
-                                }
+                                    synchronizer.run(initial_block_id, &BlockId::Slot(head_block_data.slot + 1)).await?;
+
+                                    Ok(())
+                                    }.instrument(head_span).await;
+
+                                    if let Err(error) = result {
+                                        return Err(RealtimeSyncingError::BeaconEventProcessingError(error.into()));
+                                    }
+                                },
                                 "finalized_checkpoint" => {
-                                    let finalized_checkpoint_data =
-                                        serde_json::from_str::<FinalizedCheckpointEventData>(
-                                            &event.data,
-                                        )?;
-                                    let block_hash = finalized_checkpoint_data.block;
-                                    let full_block_hash = format!("0x{:x}", block_hash);
-                                    let last_finalized_block_number = beacon_client
-                                        .get_block(&BlockId::Hash(block_hash))
-                                        .await?
-                                        .with_context(|| {
-                                            anyhow!("Finalized block with hash {full_block_hash} not found")
-                                        })?
-                                        .message.body.execution_payload
-                                        .with_context(|| {
-                                            anyhow!("Finalized block with hash {full_block_hash} has no execution payload")
-                                        })?.block_number;
+                                    let finalized_checkpoint_span = tracing::info_span!("finalized_checkpoint");
 
-                                    blobscan_client
-                                        .update_sync_state(BlockchainSyncState {
-                                            last_lower_synced_slot: None,
-                                            last_upper_synced_slot: None,
-                                            last_finalized_block: Some(
-                                                last_finalized_block_number
-                                            ),
-                                        })
-                                        .await?;
+                                    let result: Result<(), FinalizedBlockEventHandlingError> = async move {
+                                        let finalized_checkpoint_data =
+                                            serde_json::from_str::<FinalizedCheckpointEventData>(
+                                                &event.data,
+                                            )?;
+                                        let block_hash = finalized_checkpoint_data.block;
+                                        let last_finalized_block_number = beacon_client
+                                            .get_block(&BlockId::Hash(block_hash))
+                                            .await.map_err(|err| FinalizedBlockEventHandlingError::BlockRetrievalError(get_full_hash(&block_hash), err))?
+                                            .with_context(|| {
+                                                anyhow!("Finalized block not found")
+                                            })?
+                                            .message.body.execution_payload
+                                            .with_context(|| {
+                                                anyhow!("Finalized block has no execution payload")
+                                            })?.block_number;
 
-                                    info!(target, event=event_name, execution_block=last_finalized_block_number, "New finalized block detected");
+                                        blobscan_client
+                                            .update_sync_state(BlockchainSyncState {
+                                                last_lower_synced_slot: None,
+                                                last_upper_synced_slot: None,
+                                                last_finalized_block: Some(
+                                                    last_finalized_block_number
+                                                ),
+                                            })
+                                            .await.map_err(FinalizedBlockEventHandlingError::BlobscanSyncStateUpdateError)?;
+
+                                        info!(finalized_execution_block=last_finalized_block_number, "Finalized checkpoint event received. Updated last finalized block number");
+
+                                        Ok(())
+                                    }.instrument(finalized_checkpoint_span).await;
+
+                                    if let Err(error) = result {
+                                        return Err(RealtimeSyncingError::BeaconEventProcessingError(error.into()));
+                                    }
+
                                 },
                                 unexpected_event_id => {
-                                    return Err(IndexerError::UnexpectedEvent { event: unexpected_event_id.to_string() })
-                                }
+                                    return Err(RealtimeSyncingError::UnexpectedBeaconEvent(unexpected_event_id.to_string()));
+                                },
                             }
                         },
                         Err(error) => {
@@ -323,38 +384,32 @@ impl Indexer {
 
                 Ok(())
             }
+            .instrument(realtime_sync_task_span)
             .await;
 
             if let Err(error) = result {
-                // TODO: Find a better way to handle this error
-                tx.send(IndexerTaskResult::Error(
-                    IndexingTaskError::FailedIndexingTask { task_name, error },
-                ))
-                .await
-                .unwrap();
+                tx.send(IndexerTaskMessage::Error(error.into())).await?;
             } else {
-                tx.send(IndexerTaskResult::Done(task_name)).await.unwrap();
+                tx.send(IndexerTaskMessage::Done).await?;
             }
 
             Ok(())
         })
     }
 
-    fn _create_synchronizer(&self) -> Synchronizer {
+    fn _create_synchronizer(&self, checkpoint_type: CheckpointType) -> Synchronizer {
         let mut synchronizer_builder = SynchronizerBuilder::new();
 
-        synchronizer_builder.with_disable_checkpoint_save(self.disable_sync_checkpoint_save);
+        if let Some(checkpoint_slots) = self.checkpoint_slots {
+            synchronizer_builder.with_slots_checkpoint(checkpoint_slots);
+        }
+
+        let checkpoint_type = self.disabled_checkpoint.unwrap_or(checkpoint_type);
+
+        synchronizer_builder.with_checkpoint_type(checkpoint_type);
 
         synchronizer_builder.with_num_threads(self.num_threads);
 
-        if let Some(slots_checkpoint) = self.slots_checkpoint {
-            synchronizer_builder.with_slots_checkpoint(slots_checkpoint);
-        }
-
         synchronizer_builder.build(self.context.clone())
-    }
-
-    fn _get_current_lower_slot(&self, last_synced_slot: u32) -> u32 {
-        cmp::max(last_synced_slot, self.dencun_fork_slot)
     }
 }

@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use futures::future::join_all;
 use tokio::task::JoinHandle;
-use tracing::{debug, debug_span, info, Instrument};
+use tracing::{debug, info, Instrument};
 
 use crate::{
     clients::{beacon::types::BlockId, blobscan::types::BlockchainSyncState, common::ClientError},
@@ -18,15 +18,23 @@ pub struct SynchronizerBuilder {
     num_threads: u32,
     min_slots_per_thread: u32,
     slots_checkpoint: u32,
-    disable_checkpoint_save: bool,
+    checkpoint_type: CheckpointType,
 }
 
+#[derive(Debug)]
 pub struct Synchronizer {
     context: Context,
     num_threads: u32,
     min_slots_per_thread: u32,
     slots_checkpoint: u32,
-    disable_checkpoint_save: bool,
+    checkpoint_type: CheckpointType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CheckpointType {
+    Disabled,
+    Lower,
+    Upper,
 }
 
 impl Default for SynchronizerBuilder {
@@ -34,8 +42,8 @@ impl Default for SynchronizerBuilder {
         SynchronizerBuilder {
             num_threads: 1,
             min_slots_per_thread: 50,
-            slots_checkpoint: 200,
-            disable_checkpoint_save: false,
+            slots_checkpoint: 1000,
+            checkpoint_type: CheckpointType::Upper,
         }
     }
 }
@@ -45,8 +53,8 @@ impl SynchronizerBuilder {
         SynchronizerBuilder::default()
     }
 
-    pub fn with_disable_checkpoint_save(&mut self, disable_checkpoint_save: bool) -> &mut Self {
-        self.disable_checkpoint_save = disable_checkpoint_save;
+    pub fn with_checkpoint_type(&mut self, checkpoint_type: CheckpointType) -> &mut Self {
+        self.checkpoint_type = checkpoint_type;
 
         self
     }
@@ -68,7 +76,7 @@ impl SynchronizerBuilder {
             num_threads: self.num_threads,
             min_slots_per_thread: self.min_slots_per_thread,
             slots_checkpoint: self.slots_checkpoint,
-            disable_checkpoint_save: self.disable_checkpoint_save,
+            checkpoint_type: self.checkpoint_type,
         }
     }
 }
@@ -81,6 +89,10 @@ impl Synchronizer {
     ) -> Result<(), SynchronizerError> {
         let initial_slot = self._resolve_to_slot(initial_block_id).await?;
         let mut final_slot = self._resolve_to_slot(final_block_id).await?;
+
+        if initial_slot == final_slot {
+            return Ok(());
+        }
 
         loop {
             self._sync_slots_by_checkpoints(initial_slot, final_slot)
@@ -98,7 +110,7 @@ impl Synchronizer {
 
     async fn _sync_slots(&mut self, from_slot: u32, to_slot: u32) -> Result<(), SynchronizerError> {
         let is_reverse_sync = to_slot < from_slot;
-        let unprocessed_slots = to_slot.abs_diff(from_slot) + 1;
+        let unprocessed_slots = to_slot.abs_diff(from_slot);
         let min_slots_per_thread = std::cmp::min(unprocessed_slots, self.min_slots_per_thread);
         let slots_per_thread =
             std::cmp::max(min_slots_per_thread, unprocessed_slots / self.num_threads);
@@ -121,13 +133,15 @@ impl Synchronizer {
                 from_slot + i * slots_per_thread
             };
             let thread_final_slot = if is_reverse_sync {
-                thread_initial_slot - thread_total_slots + 1
+                thread_initial_slot - thread_total_slots
             } else {
-                thread_initial_slot + thread_total_slots - 1
+                thread_initial_slot + thread_total_slots
             };
 
-            let synchronizer_thread_span = tracing::trace_span!(
-                "synchronizer_thread",
+            let synchronizer_thread_span = tracing::debug_span!(
+                parent:  &tracing::Span::current(),
+                "thread",
+                thread = i,
                 chunk_initial_slot = thread_initial_slot,
                 chunk_final_slot = thread_final_slot
             );
@@ -140,7 +154,8 @@ impl Synchronizer {
 
                     Ok(())
                 }
-                .instrument(synchronizer_thread_span),
+                .instrument(synchronizer_thread_span)
+                .in_current_span(),
             );
 
             handles.push(handle);
@@ -182,40 +197,53 @@ impl Synchronizer {
     ) -> Result<(), SynchronizerError> {
         let is_reverse_sync = final_slot < initial_slot;
         let mut current_slot = initial_slot;
-        let mut unprocessed_slots = final_slot.abs_diff(current_slot) + 1;
+        let mut unprocessed_slots = final_slot.abs_diff(current_slot);
 
         info!(
-            target = "synchronizer",
             initial_slot,
             final_slot,
             reverse_sync = is_reverse_sync,
-            "Processing {unprocessed_slots} slots…"
+            "Syncing {unprocessed_slots} slots…"
         );
 
         while unprocessed_slots > 0 {
             let slots_chunk = std::cmp::min(unprocessed_slots, self.slots_checkpoint);
             let initial_chunk_slot = current_slot;
             let final_chunk_slot = if is_reverse_sync {
-                current_slot - slots_chunk + 1
+                current_slot - slots_chunk
             } else {
-                current_slot + slots_chunk - 1
+                current_slot + slots_chunk
             };
 
-            let sync_slots_chunk_span = debug_span!(
-                "synchronizer",
-                initial_slot = initial_chunk_slot,
-                final_slot = final_chunk_slot
+            let sync_slots_chunk_span = tracing::debug_span!(
+                parent: &tracing::Span::current(),
+                "checkpoint",
+                checkpoint_initial_slot = initial_chunk_slot,
+                checkpoint_final_slot = final_chunk_slot
             );
 
             self._sync_slots(initial_chunk_slot, final_chunk_slot)
                 .instrument(sync_slots_chunk_span)
                 .await?;
 
-            let last_slot = Some(final_chunk_slot);
-            let last_lower_synced_slot = if is_reverse_sync { last_slot } else { None };
-            let last_upper_synced_slot = if is_reverse_sync { None } else { last_slot };
+            let last_slot = Some(if is_reverse_sync {
+                final_chunk_slot + 1
+            } else {
+                final_chunk_slot - 1
+            });
 
-            if !self.disable_checkpoint_save {
+            if self.checkpoint_type != CheckpointType::Disabled {
+                let last_lower_synced_slot = if self.checkpoint_type == CheckpointType::Lower {
+                    last_slot
+                } else {
+                    None
+                };
+                let last_upper_synced_slot = if self.checkpoint_type == CheckpointType::Upper {
+                    last_slot
+                } else {
+                    None
+                };
+
                 if let Err(error) = self
                     .context
                     .blobscan_client()
@@ -235,7 +263,7 @@ impl Synchronizer {
                                     "Failed to get new last synced slot: last_lower_synced_slot and last_upper_synced_slot are both None"
                                 )))
                             }
-                        },
+                        }
                     };
 
                     return Err(SynchronizerError::FailedSlotCheckpointSave {
@@ -246,7 +274,6 @@ impl Synchronizer {
 
                 if unprocessed_slots >= self.slots_checkpoint {
                     debug!(
-                        target = "synchronizer",
                         new_last_lower_synced_slot = last_lower_synced_slot,
                         new_last_upper_synced_slot = last_upper_synced_slot,
                         "Checkpoint reached. Last synced slot saved…"

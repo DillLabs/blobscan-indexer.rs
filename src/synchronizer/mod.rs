@@ -227,7 +227,7 @@ impl Synchronizer {
                 .await?;
 
             let last_slot = Some(if is_reverse_sync {
-                final_chunk_slot + 1
+                final_chunk_slot
             } else {
                 final_chunk_slot - 1
             });

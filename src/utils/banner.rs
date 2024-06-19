@@ -56,12 +56,12 @@ pub fn remove_credentials_from_url(url_string: &str) -> Option<String> {
 }
 
 pub fn print_banner(args: &Args, env: &Environment) {
-    println!("____  _       _                         ");
-    println!("| __ )| | ___ | |__  ___  ___ __ _ _ __  ");
-    println!("|  _ \\| |/ _ \\| '_ \\/ __|/ __/ _` | '_ \\ ");
-    println!("| |_) | | (_) | |_) \\__ \\ (_| (_| | | | |");
-    println!("|____/|_|\\___/|_.__/|___/\\___\\__,_|_| |_|\n");
-    println!("Blobscan indexer (EIP-4844 blob indexer) - blobscan.com");
+    println!(" ____  _  _  _    ");
+    println!("|  _ \\(_)| || |___  ___ __ _ _ __    ");
+    println!("| | | | || || / __|/ __/ _` | '_ \\ ");
+    println!("| |_| | || || \\__ \\ (__|(_| | | | |");
+    println!("|____/|_||_||_|___/\\___\\__,_|_| |_|");
+    println!("Dillscan indexer (EIP-4844 blob indexer) - dillscan.dill.xyz");
     println!("=======================================================");
 
     println!("Network: {:?}", env.network_name);

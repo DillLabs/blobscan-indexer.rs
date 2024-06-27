@@ -52,6 +52,19 @@ pub struct BlockResponse {
 }
 
 #[derive(Deserialize, Debug)]
+pub struct ValidatorsResponse {
+    pub data: Vec<Validator>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Validator {
+    pub pubkey: String,
+    pub validator_index: String,
+    #[serde(deserialize_with = "deserialize_number")]
+    pub slot: u32,
+}
+
+#[derive(Deserialize, Debug)]
 pub struct Blob {
     pub index: String,
     pub kzg_commitment: String,

@@ -17,6 +17,7 @@ pub struct Block {
     pub slot: u32,
     pub blob_gas_used: U256,
     pub excess_blob_gas: U256,
+    pub validator_pubkey: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -117,11 +118,11 @@ impl From<(u32, u32)> for FailedSlotsChunk {
     }
 }
 
-impl<'a> TryFrom<(&'a EthersBlock<EthersTransaction>, u32)> for Block {
+impl<'a> TryFrom<(&'a EthersBlock<EthersTransaction>, u32, String)> for Block {
     type Error = anyhow::Error;
 
     fn try_from(
-        (ethers_block, slot): (&'a EthersBlock<EthersTransaction>, u32),
+        (ethers_block, slot, validator_pubkey): (&'a EthersBlock<EthersTransaction>, u32, String),
     ) -> Result<Self, Self::Error> {
         let number = ethers_block
             .number
@@ -166,6 +167,7 @@ impl<'a> TryFrom<(&'a EthersBlock<EthersTransaction>, u32)> for Block {
                     U256::zero()
                 }
             },
+            validator_pubkey,
         })
     }
 }

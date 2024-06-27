@@ -16,7 +16,7 @@ use self::helpers::{create_tx_hash_versioned_hashes_mapping, create_versioned_ha
 
 pub mod error;
 mod helpers;
-
+const SLOT_PER_EPOCH: u32 = 6;
 pub struct SlotsProcessor {
     context: Context,
 }
@@ -162,8 +162,6 @@ impl SlotsProcessor {
 
         // Create entities to be indexed
 
-        let block_entity = Block::try_from((&execution_block, slot))?;
-
         let transactions_entities = execution_block
             .transactions
             .iter()
@@ -179,6 +177,24 @@ impl SlotsProcessor {
 
             return Ok(());
         }
+
+        let validators = match beacon_client.get_validators(&BlockId::Slot(slot/SLOT_PER_EPOCH)).await? {
+            Some(validators) => validators,
+            None => {
+                debug!(
+                    target = "slots_processor",
+                    slot, "Skipping as there are no validators"
+                );
+
+                return Ok(());
+            }
+        };
+        //选出其中slot为当前slot的validator_pubkey
+        let validator_pubkey = validators.iter().find(|validator| validator.slot == slot).unwrap().pubkey.clone();
+        // println!("validator_pubkeys: {:?}", validator_pubkeys);
+        
+        let block_entity = Block::try_from((&execution_block, slot, validator_pubkey))?;
+
         let mut blob_entities: Vec<Blob> = vec![];
         //if there are blobs, create blob entities
         if has_kzg_blob_commitments {

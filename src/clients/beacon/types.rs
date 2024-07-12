@@ -230,3 +230,18 @@ impl From<ColumnsResponse> for BlobsResponse {
         Self { data: blobs }
     }
 }
+
+impl From<Vec<String>> for BlobsResponse {
+    fn from(kzg_commitments: Vec<String>) -> Self {
+        let mut blobs = Vec::new();
+        for (i, comm) in kzg_commitments.iter().enumerate() {
+            blobs.push(Blob {
+                index: i.to_string(),
+                kzg_commitment: comm.clone(),
+                kzg_proof: String::new(),
+                blob: Bytes::from_str(comm).unwrap(),
+            });
+        }
+        Self { data: blobs }
+    }
+}

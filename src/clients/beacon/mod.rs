@@ -9,7 +9,7 @@ use crate::{
 };
 
 // use self::types::{Blob, BlobsResponse, Block, BlockHeader, BlockId, BlockResponse, Topic};
-use self::types::{Block, BlockHeader, BlockId, BlockResponse, ColumnsResponse, Topic, ValidatorsResponse, Validator};
+use self::types::{Block, BlockHeader, BlockId, BlockResponse, Topic, ValidatorsResponse, Validator};
 pub mod types;
 
 #[derive(Debug, Clone)]
@@ -85,17 +85,17 @@ impl BeaconClient {
     //     })
     // }
 
-    pub async fn get_columns(&self, block_id: &BlockId) -> ClientResult<Option<ColumnsResponse>> {
-        let path = format!("v1/beacon/column_sidecars/{}", {
-            block_id.to_detailed_string()
-        });
-        let url = self.base_url.join(path.as_str())?;
+    // pub async fn get_columns(&self, block_id: &BlockId) -> ClientResult<Option<ColumnsResponse>> {
+    //     let path = format!("v1/beacon/column_sidecars/{}", {
+    //         block_id.to_detailed_string()
+    //     });
+    //     let url = self.base_url.join(path.as_str())?;
 
-        json_get!(&self.client, url, ColumnsResponse, self.exp_backoff.clone()).map(|res| match res {
-            Some(r) => Some(r),
-            None => None,
-        })
-    }
+    //     json_get!(&self.client, url, ColumnsResponse, self.exp_backoff.clone()).map(|res| match res {
+    //         Some(r) => Some(r),
+    //         None => None,
+    //     })
+    // }
 
     pub fn subscribe_to_events(&self, topics: &[Topic]) -> ClientResult<EventSource> {
         let topics = topics

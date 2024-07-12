@@ -86,6 +86,7 @@ impl SlotsProcessor {
                 return Ok(());
             }
         };
+        // println!("{:?}", beacon_block);
 
         let execution_payload = match beacon_block.message.body.execution_payload {
             Some(payload) => payload,
@@ -99,11 +100,11 @@ impl SlotsProcessor {
             }
         };
 
-        let has_kzg_blob_commitments = match beacon_block.message.body.blob_kzg_commitments {
-            Some(commitments) => !commitments.is_empty(),
-            None => false,
+        let blob_kzg_commitments = match beacon_block.message.body.blob_kzg_commitments{
+            Some(commitments) => commitments.clone(),
+            None => Vec::new(),
         };
-
+        // println!("{:?}===============>", blob_kzg_commitments.len());
         // if !has_kzg_blob_commitments {
         //     debug!(
         //         target = "slots_processor",
@@ -197,35 +198,8 @@ impl SlotsProcessor {
 
         let mut blob_entities: Vec<Blob> = vec![];
         //if there are blobs, create blob entities
-        if has_kzg_blob_commitments {
-            let columns = match beacon_client
-                .get_columns(&BlockId::Slot(slot))
-                .await
-                .map_err(SlotProcessingError::ClientError)?
-            {
-                Some(columns) => {
-                    if columns.data.is_empty() {
-                        debug!(
-                            target = "slots_processor",
-                            slot, "Skipping as columns sidecar is empty"
-                        );
-
-                        return Ok(());
-                    } else {
-                        columns
-                    }
-                }
-                None => {
-                    debug!(
-                        target = "slots_processor",
-                        slot, "Skipping as there is no columns sidecar"
-                    );
-
-                    return Ok(());
-                }
-            };
-
-            let blobs = BlobsResponse::from(columns).data;
+        if !blob_kzg_commitments.is_empty() {
+            let blobs = BlobsResponse::from(blob_kzg_commitments).data;
             let versioned_hash_to_blob = create_versioned_hash_blob_mapping(&blobs)?;
             for (tx_hash, versioned_hashes) in tx_hash_to_versioned_hashes.iter() {
                 for (i, versioned_hash) in versioned_hashes.iter().enumerate() {

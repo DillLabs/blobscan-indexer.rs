@@ -2,7 +2,8 @@ use anyhow::{Context as AnyhowContext, Result};
 
 use ethers::prelude::*;
 use tracing::{debug, info};
-
+use std::time::Duration;
+use std::thread::sleep;
 use crate::{
     clients::{
         beacon::types::{BlobsResponse, BlockHeader, BlockId},
@@ -118,10 +119,37 @@ impl SlotsProcessor {
 
         // Fetch execution block and perform some checks
 
-        let execution_block = provider
-            .get_block_with_txs(execution_block_hash)
-            .await?
-            .with_context(|| format!("Execution block {execution_block_hash} not found"))?;
+        // let execution_block = provider
+        //     .get_block_with_txs(execution_block_hash)
+        //     .await?
+        //     .with_context(|| format!("Execution block {execution_block_hash} not found"))?;
+        let mut retries = 0;
+        let max_retries = 300; // 最大重试次数
+        let max_delay = Duration::from_secs(300); // 最大延时
+        let mut delay = Duration::from_secs(5); // 每次重试之间的延时
+
+        let execution_block = loop {
+            match provider
+                .get_block_with_txs(execution_block_hash)
+                .await {
+                Ok(execution_block) => break execution_block,
+                Err(_e) if retries < max_retries => { // 如果发生错误，但未达到最大重试次数，进行重试
+                    retries += 1;
+                    println!("Error occurred, retrying... ({}/{})", retries, max_retries);
+                    sleep(delay); // 等待一段时间再重试
+                    delay *= 2; // 延时翻倍
+                    if delay > max_delay {
+                        delay = max_delay;
+                    }
+                },
+                Err(e) => { // 如果发生错误，并且达到最大重试次数，返回错误
+                    return Err(e.into());
+                }
+            }
+        };
+        //transfer execution_block from option to block
+        let execution_block = execution_block.unwrap();
+
         //create versioned_hashes for blob transactions
         let tx_hash_to_versioned_hashes =
             create_tx_hash_versioned_hashes_mapping(&execution_block)?;
@@ -192,6 +220,7 @@ impl SlotsProcessor {
         };
         //选出其中slot为当前slot的validator_pubkey
         let validator_pubkey = validators.iter().find(|validator| validator.slot == slot).unwrap().pubkey.clone();
+        // let validator_pubkey = "123123213".to_string();
         // println!("validator_pubkeys: {:?}", validator_pubkeys);
         
         let block_entity = Block::try_from((&execution_block, slot, validator_pubkey))?;
@@ -223,11 +252,29 @@ impl SlotsProcessor {
          */
 
         let block_number = block_entity.number.as_u32();
-
-        blobscan_client
-            .index(block_entity, transactions_entities, blob_entities)
-            .await
-            .map_err(SlotProcessingError::ClientError)?;
+        let mut retries = 0;
+        let max_retries = 300; // 最大重试次数
+        let max_delay = Duration::from_secs(300); // 最大延时
+        let mut delay = Duration::from_secs(5); // 每次重试之间的延时
+        loop {
+            match blobscan_client
+                .index(block_entity.clone(), transactions_entities.clone(), blob_entities.clone())
+                .await {
+                Ok(_) => break, // 如果操作成功，退出循环
+                Err(_e) if retries < max_retries => { // 如果发生错误，但未达到最大重试次数，进行重试
+                    retries += 1;
+                    println!("Error occurred, retrying... ({}/{})", retries, max_retries);
+                    sleep(delay); // 等待一段时间再重试
+                    delay *= 2; // 延时翻倍
+                    if delay > max_delay {
+                        delay = max_delay;
+                    }
+                },
+                Err(e) => { // 如果发生错误，并且达到最大重试次数，返回错误
+                    return Err(SlotProcessingError::ClientError(e));
+                }
+            }
+        }
 
         info!(slot, block_number, "Block indexed successfully");
 

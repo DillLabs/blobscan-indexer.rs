@@ -1,5 +1,6 @@
 use std::thread;
-
+use std::time::Duration;
+use std::thread::sleep;
 use anyhow::{anyhow, Context as AnyhowContext};
 
 use futures::StreamExt;
@@ -191,17 +192,36 @@ impl Indexer {
             let historical_syc_thread_span = tracing::info_span!("sync:historical");
 
             let result: Result<(), IndexerError> = async move {
-                let result = synchronizer.run(&start_block_id, &end_block_id).await;
+                let mut retries = 0;
+                let max_retries = 10; // 最大重试次数
+                let max_delay = Duration::from_secs(300); // 最大延时
+                let mut delay = Duration::from_secs(5); // 每次重试之间的延时
 
-                if let Err(error) = result {
-                    tx.send(IndexerTaskMessage::Error(
-                        HistoricalSyncingError::SynchronizerError(error).into(),
-                    ))
-                    .await?;
-                } else {
-                    info!("Historical syncing completed successfully");
+                while retries < max_retries {
+                    let result = synchronizer.run(&start_block_id, &end_block_id).await;
 
-                    tx.send(IndexerTaskMessage::Done).await?;
+                    if let Err(error) = result {
+                        retries += 1;
+                        error!(?error, "Historical syncing failed, retrying...");
+
+                        if retries < max_retries {
+                            tokio::time::sleep(delay).await;
+                            delay *= 2; // 延时翻倍
+                            if delay > max_delay {
+                                delay = max_delay;
+                            }
+                        } else {
+                            tx.send(IndexerTaskMessage::Error(
+                                HistoricalSyncingError::SynchronizerError(error).into(),
+                            ))
+                            .await?;
+                        }
+                    } else {
+                        info!("Historical syncing completed successfully");
+
+                        tx.send(IndexerTaskMessage::Done).await?;
+                        break;
+                    }
                 }
 
                 Ok(())
@@ -222,6 +242,10 @@ impl Indexer {
     ) -> JoinHandle<IndexerResult<()>> {
         let task_context = self.context.clone();
         let mut synchronizer = self._create_synchronizer(CheckpointType::Upper);
+        let mut retries = 0;
+        let max_retries = 300; // 最大重试次数
+        let max_delay = Duration::from_secs(300); // 最大延时
+        let mut delay = Duration::from_secs(5); // 每次重试之间的延时
 
         tokio::spawn(async move {
             let realtime_sync_task_span = tracing::info_span!("sync:realtime");
@@ -372,6 +396,15 @@ impl Indexer {
                                 unexpected_event_id => {
                                     return Err(RealtimeSyncingError::UnexpectedBeaconEvent(unexpected_event_id.to_string()));
                                 },
+                            }
+                        },
+                        Err(_error) if retries < max_retries => { // 如果发生错误，但未达到最大重试次数，进行重试
+                            retries += 1;
+                            warn!("Error occurred, retrying... ({}/{})", retries, max_retries);
+                            sleep(delay); // 等待一段时间再重试
+                            delay *= 2; // 增加延时
+                            if delay > max_delay {
+                                delay = max_delay;
                             }
                         },
                         Err(error) => {

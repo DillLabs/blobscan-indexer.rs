@@ -37,7 +37,11 @@ impl Context {
             execution_node_endpoint,
             secret_key,
         } = config;
-        let exp_backoff = Some(ExponentialBackoffBuilder::default().build());
+
+        let mut exp_backoff_builder = ExponentialBackoffBuilder::new();
+        exp_backoff_builder.with_initial_interval(Duration::from_secs(5));
+        exp_backoff_builder.with_max_interval(Duration::from_secs(3000));
+        let exp_backoff = Some(exp_backoff_builder.build());
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(3000))

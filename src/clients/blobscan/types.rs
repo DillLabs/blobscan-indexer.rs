@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{clients::beacon::types::Blob as BeaconBlob, utils::web3::calculate_versioned_hash};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Block {
     pub number: U64,
@@ -20,7 +20,7 @@ pub struct Block {
     pub validator_pubkey: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
     pub hash: H256,
@@ -32,7 +32,7 @@ pub struct Transaction {
     pub max_fee_per_blob_gas: U256,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Blob {
     pub versioned_hash: H256,
@@ -207,7 +207,7 @@ impl<'a> TryFrom<(&'a EthersTransaction, &'a EthersBlock<EthersTransaction>)> fo
                     //     "Missing `maxFeePerBlobGas` field in transaction {hash}",
                     //     hash = hash
                     // ))
-                    println!("this is a transaction with no blob");
+                    // println!("this is a transaction with no blob");
                     U256::zero()
                 }
             },

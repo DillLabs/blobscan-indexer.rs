@@ -17,7 +17,7 @@ use self::helpers::{create_tx_hash_versioned_hashes_mapping, create_versioned_ha
 
 pub mod error;
 mod helpers;
-const SLOT_PER_EPOCH: u32 = 6;
+const SLOT_PER_EPOCH: u32 = 32;
 pub struct SlotsProcessor {
     context: Context,
 }

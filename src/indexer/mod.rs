@@ -193,9 +193,9 @@ impl Indexer {
 
             let result: Result<(), IndexerError> = async move {
                 let mut retries = 0;
-                let max_retries = 10; // 最大重试次数
-                let max_delay = Duration::from_secs(300); // 最大延时
-                let mut delay = Duration::from_secs(5); // 每次重试之间的延时
+                let max_retries = 300; // max retry times
+                let max_delay = Duration::from_secs(300); // max delay between retries
+                let mut delay = Duration::from_secs(5); // initial delay between retries
 
                 while retries < max_retries {
                     let result = synchronizer.run(&start_block_id, &end_block_id).await;
@@ -206,7 +206,7 @@ impl Indexer {
 
                         if retries < max_retries {
                             tokio::time::sleep(delay).await;
-                            delay *= 2; // 延时翻倍
+                            delay *= 2; // double delay
                             if delay > max_delay {
                                 delay = max_delay;
                             }
@@ -243,9 +243,9 @@ impl Indexer {
         let task_context = self.context.clone();
         let mut synchronizer = self._create_synchronizer(CheckpointType::Upper);
         let mut retries = 0;
-        let max_retries = 300; // 最大重试次数
-        let max_delay = Duration::from_secs(300); // 最大延时
-        let mut delay = Duration::from_secs(5); // 每次重试之间的延时
+        let max_retries = 300;
+        let max_delay = Duration::from_secs(300);
+        let mut delay = Duration::from_secs(5);
 
         tokio::spawn(async move {
             let realtime_sync_task_span = tracing::info_span!("sync:realtime");
@@ -398,11 +398,11 @@ impl Indexer {
                                 },
                             }
                         },
-                        Err(_error) if retries < max_retries => { // 如果发生错误，但未达到最大重试次数，进行重试
+                        Err(_error) if retries < max_retries => {
                             retries += 1;
                             warn!("Error occurred, retrying... ({}/{})", retries, max_retries);
-                            sleep(delay); // 等待一段时间再重试
-                            delay *= 2; // 增加延时
+                            sleep(delay); // wait for delay
+                            delay *= 2; // double delay
                             if delay > max_delay {
                                 delay = max_delay;
                             }

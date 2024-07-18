@@ -1,5 +1,7 @@
 debug/
 target/
+blob-indexer-debug
+blob-indexer-release
 
 .env
 

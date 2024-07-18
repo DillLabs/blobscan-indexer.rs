@@ -17,7 +17,7 @@ use self::helpers::{create_tx_hash_versioned_hashes_mapping, create_versioned_ha
 
 pub mod error;
 mod helpers;
-const SLOT_PER_EPOCH: u32 = 6;
+const SLOT_PER_EPOCH: u32 = 32;
 pub struct SlotsProcessor {
     context: Context,
 }
@@ -124,25 +124,25 @@ impl SlotsProcessor {
         //     .await?
         //     .with_context(|| format!("Execution block {execution_block_hash} not found"))?;
         let mut retries = 0;
-        let max_retries = 300; // 最大重试次数
-        let max_delay = Duration::from_secs(300); // 最大延时
-        let mut delay = Duration::from_secs(5); // 每次重试之间的延时
+        let max_retries = 300;
+        let max_delay = Duration::from_secs(300);
+        let mut delay = Duration::from_secs(5);
 
         let execution_block = loop {
             match provider
                 .get_block_with_txs(execution_block_hash)
                 .await {
                 Ok(execution_block) => break execution_block,
-                Err(_e) if retries < max_retries => { // 如果发生错误，但未达到最大重试次数，进行重试
+                Err(_e) if retries < max_retries => {
                     retries += 1;
                     println!("Error occurred, retrying... ({}/{})", retries, max_retries);
-                    sleep(delay); // 等待一段时间再重试
-                    delay *= 2; // 延时翻倍
+                    sleep(delay);
+                    delay *= 2;
                     if delay > max_delay {
                         delay = max_delay;
                     }
                 },
-                Err(e) => { // 如果发生错误，并且达到最大重试次数，返回错误
+                Err(e) => {
                     return Err(e.into());
                 }
             }
@@ -253,24 +253,24 @@ impl SlotsProcessor {
 
         let block_number = block_entity.number.as_u32();
         let mut retries = 0;
-        let max_retries = 300; // 最大重试次数
-        let max_delay = Duration::from_secs(300); // 最大延时
-        let mut delay = Duration::from_secs(5); // 每次重试之间的延时
+        let max_retries = 300;
+        let max_delay = Duration::from_secs(300);
+        let mut delay = Duration::from_secs(5);
         loop {
             match blobscan_client
                 .index(block_entity.clone(), transactions_entities.clone(), blob_entities.clone())
                 .await {
-                Ok(_) => break, // 如果操作成功，退出循环
-                Err(_e) if retries < max_retries => { // 如果发生错误，但未达到最大重试次数，进行重试
+                Ok(_) => break,
+                Err(_e) if retries < max_retries => {
                     retries += 1;
                     println!("Error occurred, retrying... ({}/{})", retries, max_retries);
-                    sleep(delay); // 等待一段时间再重试
-                    delay *= 2; // 延时翻倍
+                    sleep(delay);
+                    delay *= 2;
                     if delay > max_delay {
                         delay = max_delay;
                     }
                 },
-                Err(e) => { // 如果发生错误，并且达到最大重试次数，返回错误
+                Err(e) => {
                     return Err(SlotProcessingError::ClientError(e));
                 }
             }

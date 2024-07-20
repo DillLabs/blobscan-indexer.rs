@@ -89,8 +89,8 @@ impl SlotsProcessor {
         //};
 
         let mut retries = 0;
-        let max_retries = 300;
-        let max_delay = Duration::from_secs(300);
+        let max_retries = 5000;
+        let max_delay = Duration::from_secs(600);
         let mut delay = Duration::from_secs(5);
 
         let beacon_block = loop {
@@ -151,8 +151,8 @@ impl SlotsProcessor {
         //     .await?
         //     .with_context(|| format!("Execution block {execution_block_hash} not found"))?;
         let mut retries = 0;
-        let max_retries = 300;
-        let max_delay = Duration::from_secs(300);
+        let max_retries = 5000;
+        let max_delay = Duration::from_secs(600);
         let mut delay = Duration::from_secs(5);
 
         let execution_block = loop {
@@ -278,8 +278,8 @@ impl SlotsProcessor {
 
         let block_number = block_entity.number.as_u32();
         let mut retries = 0;
-        let max_retries = 300;
-        let max_delay = Duration::from_secs(300);
+        let max_retries = 5000;
+        let max_delay = Duration::from_secs(600);
         let mut delay = Duration::from_secs(5);
         loop {
             match blobscan_client

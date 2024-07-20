@@ -193,8 +193,8 @@ impl Indexer {
 
             let result: Result<(), IndexerError> = async move {
                 let mut retries = 0;
-                let max_retries = 300; // max retry times
-                let max_delay = Duration::from_secs(300); // max delay between retries
+                let max_retries = 5000; // max retry times
+                let max_delay = Duration::from_secs(600); // max delay between retries
                 let mut delay = Duration::from_secs(5); // initial delay between retries
 
                 while retries < max_retries {
@@ -243,8 +243,8 @@ impl Indexer {
         let task_context = self.context.clone();
         let mut synchronizer = self._create_synchronizer(CheckpointType::Upper);
         let mut retries = 0;
-        let max_retries = 300;
-        let max_delay = Duration::from_secs(300);
+        let max_retries = 5000;
+        let max_delay = Duration::from_secs(600);
         let mut delay = Duration::from_secs(5);
 
         tokio::spawn(async move {

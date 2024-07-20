@@ -80,14 +80,6 @@ impl SlotsProcessor {
             return Ok(());
         }
 
-        //let beacon_block = match beacon_client.get_block(&BlockId::Slot(slot)).await? {
-        //    Some(block) => block,
-        //    None => {
-        //        debug!(slot = slot, "Skipping as there is no beacon block");
-        //        return Ok(());
-        //    }
-        //};
-
         let mut retries = 0;
         let max_retries = 5000;
         let max_delay = Duration::from_secs(600);
@@ -114,12 +106,13 @@ impl SlotsProcessor {
                 }
             }
         };
-        // println!("{:?}", beacon_block);
+
+        let proposer_index = beacon_block.message.proposer_index;
 
         let execution_payload = match beacon_block.message.body.execution_payload {
             Some(payload) => payload,
             None => {
-                debug!(
+                warn!(
                     slot,
                     "Skipping as beacon block doesn't contain execution payload"
                 );
@@ -181,43 +174,6 @@ impl SlotsProcessor {
         let tx_hash_to_versioned_hashes =
             create_tx_hash_versioned_hashes_mapping(&execution_block)?;
 
-        // if tx_hash_to_versioned_hashes.is_empty() {
-        //     return Err(anyhow!("Blocks mismatch: Beacon block contains blob KZG commitments, but the corresponding execution block does not contain any blob transactions").into());
-        // }
-
-        // Fetch blobs and perform some checks
-
-        // let blobs = match beacon_client
-        //     .get_blobs(&BlockId::Slot(slot))
-        //     .await
-        //     .map_err(SlotProcessingError::ClientError)?
-        // {
-        //     Some(blobs) => {
-        //         if blobs.is_empty() {
-        //             debug!(
-        //                 target = "slots_processor",
-        //                 slot, "Skipping as blobs sidecar is empty"
-        //             );
-
-        //             return Ok(());
-        //         } else {
-        //             blobs
-        //         }
-        //     }
-        //     None => {
-        //         debug!(
-        //             target = "slots_processor",
-        //             slot, "Skipping as there is no blobs sidecar"
-        //         );
-
-        //         return Ok(());
-        //     }
-        // };
-        
-
-
-        // Create entities to be indexed
-
         let transactions_entities = execution_block
             .transactions
             .iter()
@@ -234,19 +190,48 @@ impl SlotsProcessor {
             return Ok(());
         }
 
-        let proposers = match beacon_client.get_proposers(&BlockId::Slot(slot/SLOT_PER_EPOCH)).await? {
-            Some(proposers) => proposers,
-            None => {
-                debug!(
-                    target = "slots_processor",
-                    slot, "Skipping as there are no proposers"
-                );
-
-                return Ok(());
+        let mut retries = 0;
+        let max_retries = 5000;
+        let max_delay = Duration::from_secs(600);
+        let mut delay = Duration::from_secs(5);
+        let validator_containers = loop {
+            match beacon_client.get_head_validators(&proposer_index).await? {
+                Some(containers) => break Some(containers),
+                None => if retries < max_retries {
+                    retries += 1;
+                    println!("Error occurred, retrying... ({}/{})", retries, max_retries);
+                    sleep(delay);
+                    delay *= 2;
+                    if delay > max_delay {
+                        delay = max_delay;
+                    }
+                } else {
+                    println!("Failed to get head proposer_index {} validator after {} retries. Skipping slot processing.", 
+                        proposer_index, retries
+                    );
+                    return Err(SlotProcessingError::CustomError("Failed to get validator after retries".to_string()));
+                }
             }
         };
+
+        let validator_pubkey;
+
+        match validator_containers {
+          Some(containers) => {
+            validator_pubkey = containers[0].validator.pubkey.clone();
+          },
+          None => return Err(SlotProcessingError::CustomError("Failed to get validator pubkey".to_string())) 
+        }
+
         //choose validator_pubkey(proposer) of the current slot from validators
-        let validator_pubkey = proposers.iter().find(|proposer| proposer.slot == slot).unwrap().pubkey.clone();
+        //let validator_pubkey : Option<ValidatorPubkey>;
+        //if let Some(validator_containers) = validator_containers {
+        //    if validator_containers.len() != 1 {
+        //        println!("validators length {} != 1",  validator_containers.len() );
+        //        return Err(SlotProcessingError::CustomError("validators length ! = 1".to_string()));
+        //    }
+        //    validator_pubkey = validator_containers[0].validator.pubkey.clone();
+        //}
         
         let block_entity = Block::try_from((&execution_block, slot, validator_pubkey))?;
 

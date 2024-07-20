@@ -37,6 +37,7 @@ pub struct BlockBody {
 pub struct BlockMessage {
     #[serde(deserialize_with = "deserialize_number")]
     pub slot: u32,
+    pub proposer_index: u64,
     pub body: BlockBody,
     pub parent_root: H256,
 }
@@ -62,6 +63,32 @@ pub struct Proposer {
     pub validator_index: String,
     #[serde(deserialize_with = "deserialize_number")]
     pub slot: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetValidatorsResponse {
+  pub execution_optimistic: bool,
+  pub finalized: bool,
+  pub data: Vec<ValidatorContainer>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ValidatorContainer {
+    pub index: String,
+    pub status: String,
+    pub validator: Validator,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Validator {
+  pub pubkey: String,
+  pub withdrawal_credentials: String,
+  pub effective_balance: String,
+  pub slashed: bool,
+  pub activation_eligibility_epoch: String,
+  pub activation_epoch: String, 
+  pub exit_epoch: String,
+  pub withdrawable_epoch: String
 }
 
 #[derive(Deserialize, Debug)]

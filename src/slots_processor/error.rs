@@ -6,6 +6,13 @@ pub enum SlotProcessingError {
     Provider(#[from] ethers::providers::ProviderError),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+    CustomError(String),
+}
+
+impl std::fmt::Display for SlotProcessingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      write!(f, "{:?}", self) 
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

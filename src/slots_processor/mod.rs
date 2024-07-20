@@ -116,6 +116,8 @@ impl SlotsProcessor {
         };
         // println!("{:?}", beacon_block);
 
+        let proposer_index = beacon_block.message.proposer_index;
+
         let execution_payload = match beacon_block.message.body.execution_payload {
             Some(payload) => payload,
             None => {
@@ -234,19 +236,19 @@ impl SlotsProcessor {
             return Ok(());
         }
 
-        let validators = match beacon_client.get_validators(&BlockId::Slot(slot/SLOT_PER_EPOCH)).await? {
-            Some(validators) => validators,
+        let proposers = match beacon_client.get_proposers(&BlockId::Slot(slot/SLOT_PER_EPOCH)).await? {
+            Some(proposers) => proposers,
             None => {
                 debug!(
                     target = "slots_processor",
-                    slot, "Skipping as there are no validators"
+                    slot, "Skipping as there are no proposers"
                 );
 
                 return Ok(());
             }
         };
         //choose validator_pubkey(proposer) of the current slot from validators
-        let validator_pubkey = validators.iter().find(|validator| validator.slot == slot).unwrap().pubkey.clone();
+        let validator_pubkey = proposers.iter().find(|proposer| proposer.slot == slot).unwrap().pubkey.clone();
         
         let block_entity = Block::try_from((&execution_block, slot, validator_pubkey))?;
 

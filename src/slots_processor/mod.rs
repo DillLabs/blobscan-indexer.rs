@@ -1,7 +1,7 @@
 use anyhow::{Context as AnyhowContext, Result};
 
 use ethers::prelude::*;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use std::time::Duration;
 use std::thread::sleep;
 use crate::{
@@ -79,12 +79,39 @@ impl SlotsProcessor {
             );
             return Ok(());
         }
-        let beacon_block = match beacon_client.get_block(&BlockId::Slot(slot)).await? {
-            Some(block) => block,
-            None => {
-                debug!(slot = slot, "Skipping as there is no beacon block");
 
-                return Ok(());
+        //let beacon_block = match beacon_client.get_block(&BlockId::Slot(slot)).await? {
+        //    Some(block) => block,
+        //    None => {
+        //        debug!(slot = slot, "Skipping as there is no beacon block");
+        //        return Ok(());
+        //    }
+        //};
+
+        let mut retries = 0;
+        let max_retries = 300;
+        let max_delay = Duration::from_secs(300);
+        let mut delay = Duration::from_secs(5);
+
+        let beacon_block = loop {
+            match beacon_client.get_block(&BlockId::Slot(slot)).await {
+                Ok(Some(block)) => break block,
+                Ok(None) => {
+                    debug!(slot = slot, "Skipping as there is no beacon block");
+                    return Ok(());
+                },
+                Err(_e) if retries < max_retries => {
+                    retries += 1;
+                    warn!(retries, "Error {:?} occurred when get beacon block, retrying... ({}/{}) ", _e, retries, max_retries);
+                    sleep(delay);
+                    delay *= 2;
+                    if delay > max_delay {
+                        delay = max_delay;
+                    }
+                },
+                Err(e) => {
+                    return Err(e.into());
+                }
             }
         };
         // println!("{:?}", beacon_block);
@@ -218,10 +245,8 @@ impl SlotsProcessor {
                 return Ok(());
             }
         };
-        //选出其中slot为当前slot的validator_pubkey
+        //choose validator_pubkey(proposer) of the current slot from validators
         let validator_pubkey = validators.iter().find(|validator| validator.slot == slot).unwrap().pubkey.clone();
-        // let validator_pubkey = "123123213".to_string();
-        // println!("validator_pubkeys: {:?}", validator_pubkeys);
         
         let block_entity = Block::try_from((&execution_block, slot, validator_pubkey))?;
 

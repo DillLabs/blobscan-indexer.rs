@@ -37,7 +37,6 @@ pub struct BlockBody {
 pub struct BlockMessage {
     #[serde(deserialize_with = "deserialize_number")]
     pub slot: u32,
-    pub proposer_index: u64,
     pub body: BlockBody,
     pub parent_root: H256,
 }

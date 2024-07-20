@@ -116,8 +116,6 @@ impl SlotsProcessor {
         };
         // println!("{:?}", beacon_block);
 
-        let proposer_index = beacon_block.message.proposer_index;
-
         let execution_payload = match beacon_block.message.body.execution_payload {
             Some(payload) => payload,
             None => {

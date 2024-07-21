@@ -37,6 +37,8 @@ pub struct BlockBody {
 pub struct BlockMessage {
     #[serde(deserialize_with = "deserialize_number")]
     pub slot: u32,
+    #[serde(deserialize_with = "deserialize_number_u64")]
+    pub proposer_index: u64,
     pub body: BlockBody,
     pub parent_root: H256,
 }
@@ -52,16 +54,33 @@ pub struct BlockResponse {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct ValidatorsResponse {
-    pub data: Vec<Validator>,
+pub struct ProposersResponse {
+    pub data: Vec<Proposer>,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct Validator {
+pub struct Proposer {
     pub pubkey: String,
     pub validator_index: String,
     #[serde(deserialize_with = "deserialize_number")]
     pub slot: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetValidatorResponse {
+  pub data: ValidatorContainer,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ValidatorContainer {
+    //pub index: String,
+    //pub status: String,
+    pub validator: Validator,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Validator {
+  pub pubkey: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -141,6 +160,15 @@ where
     let value = String::deserialize(deserializer)?;
 
     value.parse::<u32>().map_err(serde::de::Error::custom)
+}
+
+fn deserialize_number_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+
+    value.parse::<u64>().map_err(serde::de::Error::custom)
 }
 
 impl BlockId {

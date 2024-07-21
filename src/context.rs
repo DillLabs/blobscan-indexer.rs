@@ -41,6 +41,7 @@ impl Context {
         let mut exp_backoff_builder = ExponentialBackoffBuilder::new();
         exp_backoff_builder.with_initial_interval(Duration::from_secs(5));
         exp_backoff_builder.with_max_interval(Duration::from_secs(3000));
+        exp_backoff_builder.with_max_elapsed_time(Some(Duration::from_secs(86400*7)));
         let exp_backoff = Some(exp_backoff_builder.build());
 
         let client = reqwest::Client::builder()

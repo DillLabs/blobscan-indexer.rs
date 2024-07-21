@@ -9,7 +9,7 @@ use crate::{
 };
 
 // use self::types::{Blob, BlobsResponse, Block, BlockHeader, BlockId, BlockResponse, Topic};
-use self::types::{Block, BlockHeader, BlockId, BlockResponse, Topic, ProposersResponse, Proposer, GetValidatorsResponse, ValidatorContainer, Validator};
+use self::types::{Block, BlockHeader, BlockId, BlockResponse, Topic, ProposersResponse, Proposer, GetValidatorResponse, ValidatorContainer, Validator};
 pub mod types;
 
 #[derive(Debug, Clone)]
@@ -57,11 +57,11 @@ impl BeaconClient {
     //    })
     //}
 
-    pub async fn get_head_validators(&self, index: &u64) -> ClientResult<Option<Vec<ValidatorContainer>>> {
+    pub async fn get_head_validator(&self, index: &u64) -> ClientResult<Option<ValidatorContainer>> {
         let path = format!("v1/beacon/states/head/validators/{}", index);
         let url = self.base_url.join(path.as_str())?;
 
-        json_get!(&self.client, url, GetValidatorsResponse, self.exp_backoff.clone()).map(|res| match res {
+        json_get!(&self.client, url, GetValidatorResponse, self.exp_backoff.clone()).map(|res| match res {
             Some(r) => Some(r.data),
             None => None,
         })

@@ -3,6 +3,7 @@ use anyhow::{Context as AnyhowContext, Result};
 use ethers::prelude::*;
 use tracing::{debug, info, warn};
 use std::time::Duration;
+use std::time::SystemTime;
 use std::thread::sleep;
 use crate::{
     clients::{
@@ -69,6 +70,7 @@ impl SlotsProcessor {
     }
 
     pub async fn process_slot(&mut self, slot: u32) -> Result<(), SlotProcessingError> {
+        debug!("process_slot, slot is {}, begin time is {:?}", slot, SystemTime::now()); 
         let beacon_client = self.context.beacon_client();
         let blobscan_client = self.context.blobscan_client();
         let provider = self.context.provider();
@@ -85,6 +87,7 @@ impl SlotsProcessor {
         let max_delay = Duration::from_secs(600);
         let mut delay = Duration::from_secs(5);
 
+        debug!("process_slot, slot is {}, before get beacon block, time is {:?}", slot, SystemTime::now()); 
         let beacon_block = loop {
             match beacon_client.get_block(&BlockId::Slot(slot)).await {
                 Ok(Some(block)) => break block,
@@ -106,6 +109,7 @@ impl SlotsProcessor {
                 }
             }
         };
+        debug!("process_slot, slot is {}, after get beacon block, time is {:?}", slot, SystemTime::now()); 
 
         let proposer_index = beacon_block.message.proposer_index;
 
@@ -148,6 +152,7 @@ impl SlotsProcessor {
         let max_delay = Duration::from_secs(600);
         let mut delay = Duration::from_secs(5);
 
+        debug!("process_slot, slot is {}, before get execution block, time is {:?}", slot, SystemTime::now()); 
         let execution_block = loop {
             match provider
                 .get_block_with_txs(execution_block_hash)
@@ -167,6 +172,7 @@ impl SlotsProcessor {
                 }
             }
         };
+        debug!("process_slot, slot is {}, after get execution block, time is {:?}", slot, SystemTime::now()); 
         //transfer execution_block from option to block
         let execution_block = execution_block.unwrap();
 
@@ -194,9 +200,11 @@ impl SlotsProcessor {
         let max_retries = 5000;
         let max_delay = Duration::from_secs(600);
         let mut delay = Duration::from_secs(5);
-        let validator_containers = loop {
-            match beacon_client.get_head_validators(&proposer_index).await? {
-                Some(containers) => break Some(containers),
+
+        debug!("process_slot, slot is {}, before get_head_validator, time is {:?}", slot, SystemTime::now()); 
+        let validator_container = loop {
+            match beacon_client.get_head_validator(&proposer_index).await? {
+                Some(container) => break Some(container),
                 None => if retries < max_retries {
                     retries += 1;
                     println!("Error occurred, retrying... ({}/{})", retries, max_retries);
@@ -213,25 +221,15 @@ impl SlotsProcessor {
                 }
             }
         };
+        debug!("process_slot, slot is {}, after get_head_validator, time is {:?}", slot, SystemTime::now()); 
 
         let validator_pubkey;
-
-        match validator_containers {
+        match validator_container {
           Some(containers) => {
-            validator_pubkey = containers[0].validator.pubkey.clone();
+            validator_pubkey = containers.validator.pubkey.clone();
           },
           None => return Err(SlotProcessingError::CustomError("Failed to get validator pubkey".to_string())) 
         }
-
-        //choose validator_pubkey(proposer) of the current slot from validators
-        //let validator_pubkey : Option<ValidatorPubkey>;
-        //if let Some(validator_containers) = validator_containers {
-        //    if validator_containers.len() != 1 {
-        //        println!("validators length {} != 1",  validator_containers.len() );
-        //        return Err(SlotProcessingError::CustomError("validators length ! = 1".to_string()));
-        //    }
-        //    validator_pubkey = validator_containers[0].validator.pubkey.clone();
-        //}
         
         let block_entity = Block::try_from((&execution_block, slot, validator_pubkey))?;
 
@@ -248,24 +246,14 @@ impl SlotsProcessor {
                 }
             }
         }
-        
-
-        /*
-        let tx_hashes = transactions_entities
-            .iter()
-            .map(|tx| tx.hash.to_string())
-            .collect::<Vec<String>>();
-        let blob_versioned_hashes = blob_entities
-            .iter()
-            .map(|blob| blob.versioned_hash.to_string())
-            .collect::<Vec<String>>();
-         */
 
         let block_number = block_entity.number.as_u32();
         let mut retries = 0;
         let max_retries = 5000;
         let max_delay = Duration::from_secs(600);
         let mut delay = Duration::from_secs(5);
+
+        debug!("process_slot, slot is {}, before blobscan index, time is {:?}", slot, SystemTime::now()); 
         loop {
             match blobscan_client
                 .index(block_entity.clone(), transactions_entities.clone(), blob_entities.clone())
@@ -285,8 +273,10 @@ impl SlotsProcessor {
                 }
             }
         }
+        debug!("process_slot, slot is {}, after blobscan index, time is {:?}", slot, SystemTime::now()); 
 
         info!(slot, block_number, "Block indexed successfully");
+        debug!("process_slot, slot is {}, end time is {:?}", slot, SystemTime::now()); 
 
         Ok(())
     }

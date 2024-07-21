@@ -96,13 +96,32 @@ impl Indexer {
         start_block_id: Option<BlockId>,
         end_block_id: Option<BlockId>,
     ) -> IndexerResult<()> {
-        let sync_state = match self.context.blobscan_client().get_sync_state().await {
-            Ok(state) => state,
-            Err(error) => {
-                error!(?error, "Failed to fetch blobscan's sync state");
 
-                return Err(IndexerError::BlobscanSyncStateRetrievalError(error));
-            }
+        let mut retries = 0;
+        let max_retries = 5000;
+        let max_delay = Duration::from_secs(600);
+        let mut delay = Duration::from_secs(5);
+
+        let sync_state = loop {
+            let state = match self.context.blobscan_client().get_sync_state().await {
+                Ok(state) => state,  
+                Err(err) => {
+                    if retries < max_retries {
+                        retries += 1;
+                        warn!("Error occurred, retrying..");
+                        sleep(delay);
+                        delay *= 2;
+                        if delay > max_delay {
+                          delay = max_delay;  
+                        }
+                        continue;
+                    } else {
+                        error!(?err, "Failed to fetch blobscan's sync state");
+                        return Err(IndexerError::BlobscanSyncStateRetrievalError(err));
+                    }
+                }
+            };
+            break state;
         };
 
         let current_lower_block_id = match start_block_id.clone() {
